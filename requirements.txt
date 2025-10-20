@@ -1,0 +1,14 @@
+# CyberBridge Guardian — requirements.txt
+
+# Core
+streamlit>=1.32
+pandas>=2.0
+numpy>=1.23
+
+# MFA demo (QR + TOTP)
+pyotp>=2.9.0
+qrcode[pil]>=7.4
+
+# URL parsing & IDNA handling (recommended)
+tldextract>=5.0.0
+idna>=3.6
