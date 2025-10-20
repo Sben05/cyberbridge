@@ -42,7 +42,7 @@ load_css("assets/custom.css")
 st.markdown(
     """
     <div class="hero fade-in">
-      <div class="title">CyberBridge Guardian — Cisco Edition</div>
+      <div class="title">CyberBridge Guardian</div>
       <div class="kicker">Duo MFA · Umbrella DNS · Meraki Planner · Mini-SOC · ROI & Equity</div>
     </div>
     """,
@@ -213,7 +213,7 @@ if selected == "Home":
 # ------------------------- Duo MFA (QR-only, inline verify) -------------------------
 elif selected == "Duo MFA":
     st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
-    st.markdown("## Duo MFA — Enroll & Verify (6-digit TOTP)")
+    st.markdown("## Duo MFA, Enroll & Verify via a 6-digit TOTP")
     st.markdown(
         "- Enrollment is via QR **scanned in Duo Mobile**.\n"
         "- After scanning, enter the **6-digit code** from the app and click **Verify**.\n"
@@ -238,7 +238,7 @@ elif selected == "Duo MFA":
         # ---------- LEFT: STEP 1 — Scan QR via Duo Mobile ----------
         with col_left:
             st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
-            st.subheader("Step 1 — Scan the QR in Duo Mobile")
+            st.subheader("Step 1. Scan the QR in Duo Mobile (please open the Duo app then press the show QR button below)")
 
             user_email = st.text_input("Campus email", "student@example.edu")
             issuer = st.text_input("Issuer", "CyberBridge Guardian (Duo-style)")
@@ -257,7 +257,7 @@ elif selected == "Duo MFA":
             )
 
             # Acknowledge instructions to reveal QR (prevents accidental screenshots)
-            show_qr = st.button("✅ I have Duo Mobile open — Show QR", disabled=st.session_state.duo_ack)
+            show_qr = st.button("I have Duo Mobile open... Show QR", disabled=st.session_state.duo_ack)
             if show_qr:
                 st.session_state.duo_ack = True
                 st.toast("Duo instructions acknowledged.", icon="✅")
@@ -289,7 +289,7 @@ elif selected == "Duo MFA":
         # ---------- RIGHT: STEP 2 — Enter code & Verify ----------
         with col_right:
             st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
-            st.subheader("Step 2 — Enter the 6-digit code from Duo")
+            st.subheader("Step 2. Enter the 6-digit code from Duo")
 
             code_raw = st.text_input("6-digit code", max_chars=6, help="Type the 6 digits shown in Duo Mobile")
             code = re.sub(r"[^0-9]", "", code_raw or "")
