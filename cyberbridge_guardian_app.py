@@ -499,7 +499,7 @@ elif page == "1) Duo MFA Rollout":
         st.subheader("Approve")
 
         c1, c2 = st.columns(2)
-
+        
         # --- A) Auto-Verify (push-style simulation) ---
         with c1:
             st.markdown("**A) Auto-Verify (push-style simulation)**")
@@ -508,74 +508,35 @@ elif page == "1) Duo MFA Rollout":
                 if st.session_state.get("bound_hash") is None:
                     bind_raw = f"{user_email}|{secret}"
                     st.session_state.bound_hash = hashlib.sha256(bind_raw.encode()).hexdigest()
-                if st.session_state.bound_hash:
-                    st.success("Approved. Device binding recorded and expected code validated.")
-                else:
-                    st.error("Device not bound; please enroll again.")
-
-        # --- B) Code entry + Number-Match (robust version) ---
-        with c2:
-            st.markdown("**B) Code entry + Number-Match**")
+                st.success("Approved. Device binding recorded.")
         
-            # 1) OTP input (allow slight clock skew)
+        # --- B) 6-digit Code Only (no number-match) ---
+        with c2:
+            st.markdown("**B) 6-digit Code Only**")
             code = st.text_input("Enter 6-digit code from your authenticator", max_chars=6)
         
-            # 2) Challenge state helpers
-            def _make_challenge():
-                target = random.randint(10, 99)
-                # pick 2 distinct decoys
-                decoys = set()
-                while len(decoys) < 2:
-                    d = random.randint(10, 99)
-                    if d != target:
-                        decoys.add(d)
-                opts = list(decoys) + [target]
-                random.shuffle(opts)
-                st.session_state.nm = {"target": target, "options": opts, "selected": None, "ts": time.time()}
+            # (Optional) helper: show time remaining for current TOTP window
+            if pyotp is not None:
+                totp = pyotp.TOTP(secret)
+                now = int(time.time())
+                period = getattr(totp, "interval", 30)
+                remaining = period - (now % period)
+                st.caption(f"Code refreshes in ~{remaining}s")
         
-            def _ensure_challenge():
-                if "nm" not in st.session_state:
-                    _make_challenge()
+            if st.button("Verify 6-digit Code"):
+                if not code.strip():
+                    st.error("Enter the 6-digit code.")
+                elif pyotp is None:
+                    st.error("pyotp is not installed. Run:  pip install pyotp")
                 else:
-                    # expire old challenges (> 90s) so users always get a visible prompt
-                    if time.time() - st.session_state.nm.get("ts", 0) > 90:
-                        _make_challenge()
-        
-            _ensure_challenge()
-        
-            nm = st.session_state.nm
-            st.markdown(f"**Number-match challenge (shown on SSO screen):** `{nm['target']}`")
-        
-            # 3) Clear, reliable selector (radio)
-            st.session_state.nm["selected"] = st.radio(
-                "Select the matching number",
-                options=nm["options"],
-                index=(nm["options"].index(nm["selected"]) if nm.get("selected") in nm["options"] else None),
-                key="nm_radio"
-            )
-        
-            col_actions = st.columns([1, 1])
-            with col_actions[0]:
-                if st.button("Verify with Code + Match"):
-                    if not code.strip():
-                        st.error("Enter the 6-digit code.")
-                    elif st.session_state.nm.get("selected") is None:
-                        st.error("Select the matching number.")
+                    ok = pyotp.TOTP(secret).verify(code.strip(), valid_window=1)  # small clock drift tolerance
+                    if ok:
+                        # ensure binding exists for demo parity with Auto-Verify
+                        if st.session_state.get("bound_hash") is None:
+                            st.session_state.bound_hash = hashlib.sha256(f"{user_email}|{secret}".encode()).hexdigest()
+                        st.success("Approved via 6-digit code.")
                     else:
-                        ok_code  = pyotp.TOTP(secret).verify(code.strip(), valid_window=1)  # tolerate small drift
-                        ok_match = (st.session_state.nm["selected"] == st.session_state.nm["target"])
-                        if ok_code and ok_match:
-                            st.success("Code valid. Number-match confirmed.")
-                        elif not ok_code and ok_match:
-                            st.error("Number-match correct, but code invalid or expired.")
-                        elif ok_code and not ok_match:
-                            st.error("Code valid, but number-match selection is incorrect.")
-                        else:
-                            st.error("Both the code and number-match selection are incorrect.")
-            with col_actions[1]:
-                if st.button("New Number-Match Challenge"):
-                    _make_challenge()
-                    st.info("New challenge generated.")
+                        st.error("Invalid or expired code. Try the current 6-digit code in your app.")
 
         st.markdown("---")
         st.subheader("Rollout & Adoption (Operations)")
