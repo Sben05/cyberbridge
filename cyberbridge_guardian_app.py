@@ -513,14 +513,17 @@ elif page == "1) Duo MFA Rollout":
                 else:
                     st.error("Device not bound; please enroll again.")
 
-        # --- B) Code entry + Number-Match (no slider; clean selectable options) ---
+        # --- B) Code entry + Number-Match (robust version) ---
         with c2:
             st.markdown("**B) Code entry + Number-Match**")
-            code = st.text_input("Enter 6-digit code from your authenticator")
-
-            # Create/refresh number-match target and options
-            def generate_number_match():
+        
+            # 1) OTP input (allow slight clock skew)
+            code = st.text_input("Enter 6-digit code from your authenticator", max_chars=6)
+        
+            # 2) Challenge state helpers
+            def _make_challenge():
                 target = random.randint(10, 99)
+                # pick 2 distinct decoys
                 decoys = set()
                 while len(decoys) < 2:
                     d = random.randint(10, 99)
@@ -528,42 +531,39 @@ elif page == "1) Duo MFA Rollout":
                         decoys.add(d)
                 opts = list(decoys) + [target]
                 random.shuffle(opts)
-                st.session_state.nm_target = target
-                st.session_state.nm_options = opts
-                st.session_state.nm_selected = None
-
-            if "nm_target" not in st.session_state:
-                generate_number_match()
-
-            nm_target = st.session_state.nm_target
-            nm_options = st.session_state.nm_options
-            nm_selected = st.session_state.get("nm_selected")
-
-            st.caption(f"Number-match challenge displayed in SSO: {nm_target}")
-
-            # Render options as selectable pill buttons
-            opt_cols = st.columns(len(nm_options))
-            for i, val in enumerate(nm_options):
-                selected = (nm_selected == val)
-                with opt_cols[i]:
-                    st.markdown(
-                        f'<div class="nm-option {"selected" if selected else ""}">{val}</div>',
-                        unsafe_allow_html=True
-                    )
-                    if st.button(f"Select {val}", key=f"nm_{val}"):
-                        st.session_state.nm_selected = val
-                        nm_selected = val
-
-            col_actions = st.columns([1,1])
+                st.session_state.nm = {"target": target, "options": opts, "selected": None, "ts": time.time()}
+        
+            def _ensure_challenge():
+                if "nm" not in st.session_state:
+                    _make_challenge()
+                else:
+                    # expire old challenges (> 90s) so users always get a visible prompt
+                    if time.time() - st.session_state.nm.get("ts", 0) > 90:
+                        _make_challenge()
+        
+            _ensure_challenge()
+        
+            nm = st.session_state.nm
+            st.markdown(f"**Number-match challenge (shown on SSO screen):** `{nm['target']}`")
+        
+            # 3) Clear, reliable selector (radio)
+            st.session_state.nm["selected"] = st.radio(
+                "Select the matching number",
+                options=nm["options"],
+                index=(nm["options"].index(nm["selected"]) if nm.get("selected") in nm["options"] else None),
+                key="nm_radio"
+            )
+        
+            col_actions = st.columns([1, 1])
             with col_actions[0]:
                 if st.button("Verify with Code + Match"):
                     if not code.strip():
                         st.error("Enter the 6-digit code.")
-                    elif st.session_state.get("nm_selected") is None:
+                    elif st.session_state.nm.get("selected") is None:
                         st.error("Select the matching number.")
                     else:
-                        ok_code = pyotp.TOTP(secret).verify(code.strip())
-                        ok_match = (st.session_state.nm_selected == st.session_state.nm_target)
+                        ok_code  = pyotp.TOTP(secret).verify(code.strip(), valid_window=1)  # tolerate small drift
+                        ok_match = (st.session_state.nm["selected"] == st.session_state.nm["target"])
                         if ok_code and ok_match:
                             st.success("Code valid. Number-match confirmed.")
                         elif not ok_code and ok_match:
@@ -574,7 +574,7 @@ elif page == "1) Duo MFA Rollout":
                             st.error("Both the code and number-match selection are incorrect.")
             with col_actions[1]:
                 if st.button("New Number-Match Challenge"):
-                    generate_number_match()
+                    _make_challenge()
                     st.info("New challenge generated.")
 
         st.markdown("---")
