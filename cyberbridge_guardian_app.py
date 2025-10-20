@@ -53,7 +53,7 @@ tb1, tb2, tb3 = st.columns([1,2,1])
 with tb1:
     demo_mode = st.checkbox("Use sample data", value=True)
 with tb3:
-    st.markdown('<div class="small" style="text-align:right;">All data is synthetic</div>', unsafe_allow_html=True)
+    st.markdown('<div class="small" style="text-align:right;">© Shreeniket Bendre; projected data.</div>', unsafe_allow_html=True)
 
 # ------------------------- Top Nav -------------------------
 with st.container():
