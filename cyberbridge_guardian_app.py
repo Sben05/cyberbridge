@@ -1,41 +1,15 @@
-# CyberBridge Guardian — Cisco-Aligned Campus Security Webapp (Formal • Palette Refresh)
-# --------------------------------------------------------------------------------------
-# Authors: Aryan Kalluvila • Evan Morgan • Shreeniket Bendre (Northwestern University)
-#
-# Purpose
-#   A formal, production-style Streamlit application that demonstrates a cohesive,
-#   Cisco-aligned security solution for MSIs/HBCUs. Each section begins with:
-#     • What this section does
-#     • How to use / simulate
-#     • Why it matters in the context of the project essay
-#
-# Modules
-#   1) Duo MFA Rollout — scan-to-enroll (QR), one-tap “auto-verify” (push-style simulation),
-#      number-match with a clean selectable option UI (no slider).
-#   2) Umbrella DNS Guard — allow/block/watch policy builder + explainable URL risk scoring.
-#   3) Meraki Reliability Planner — AP sizing for critical zones + simulated reliability uplift.
-#   4) Mini-SOC (Simulated) — realistic synthetic events; filters, search, CSV export.
-#   5) ROI & Equity Impact — converts reduced incidents into institutional dollars and tuition equivalents.
-#   Appendix) Context & Stakeholders — formal narrative aligned to the project essay.
-#
-# Notes
-#   • Runs fully offline with synthetic data (no institutional credentials).
-#   • Optional live MFA demo requires: pip install pyotp qrcode[pil]
-#   • Optional domain parsing assist: pip install tldextract idna
-#
-# Run
-#   streamlit run app.py
+# CyberBridge Guardian — Aurora UI (Streamlit)
+# High-contrast neon/glass design, sticky glass nav, Duo QR gating, no stray "\n"
+# Works in Colab + ngrok; uses .streamlit/config.toml and assets/custom.css
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import math, re, io, base64, random, time
+import math, re, io, base64, random, time, difflib, hashlib
 from datetime import datetime
 from urllib.parse import urlparse
-import difflib
-import hashlib
 
-# Optional dependencies (handled gracefully if absent)
+# Optional dependencies (graceful if missing)
 try:
     import qrcode
     import pyotp
@@ -46,227 +20,67 @@ except Exception:
 try:
     import tldextract
 except Exception:
-    tldextract = None  # fallback parsing will still work for most URLs
+    tldextract = None
 
-# ============================ PAGE CONFIG & THEME ============================
-APP_TITLE = "CyberBridge Guardian (Cisco Edition)"
-st.set_page_config(page_title=APP_TITLE, layout="wide")
+from streamlit_option_menu import option_menu
 
-# Requested palette:
-# 1) #5b68d0  2) #c951cb  3) #1b84e0  4) #4d6bd3
-STYLES = """
-<style>
-/* Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&family=EB+Garamond:wght@400;500;600;700&display=swap');
+# ------------------------- Page setup -------------------------
+st.set_page_config(page_title="CyberBridge Guardian", page_icon="🛡️", layout="wide")
+st.markdown("<meta name='theme-color' content='#0A0B0F'>", unsafe_allow_html=True)
 
-/* Brand tokens */
-:root{
-  --blue1:#5b68d0; --violet:#c951cb; --blue2:#1b84e0; --blue3:#4d6bd3;
-  --bg:#0b0f1a; --bg2:#0e1424; --text:#e9edf7; --muted:#9aa7c0;
-  --stroke:rgba(91,104,208,0.35); --stroke-strong:rgba(91,104,208,0.55);
-  --card:rgba(18,24,44,0.72); --primary:#c951cb;
-}
+# Load external CSS (keeps styles sticky under Colab/ngrok)
+def load_css(path: str):
+    try:
+        with open(path) as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except Exception:
+        st.warning(f"Custom CSS not found at {path}")
 
-/* Global surface */
-html, body, .stApp, [data-testid="stAppViewContainer"]{
-  background:
-    radial-gradient(1600px 700px at 8% 6%, rgba(91,104,208,0.22), transparent 60%),
-    radial-gradient(1200px 520px at 96% 4%, rgba(201,81,203,0.15), transparent 60%),
-    radial-gradient(1400px 600px at 40% 100%, rgba(27,132,224,0.14), transparent 70%),
-    linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%) !important;
-  color:var(--text)!important;
-}
+load_css("assets/custom.css")
 
-/* Typography: bold Poppins for headlines/labels; Garamond for body */
-h1,h2,h3,h4,
-label,.stRadio,.stCheckbox,.stSelectbox,.stButton,.metric .big{
-  font-family:'Poppins',system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif !important;
-  font-weight:700 !important; letter-spacing:.2px;
-}
-p,li,span,div,.small{
-  font-family:'EB Garamond',Garamond,'Times New Roman',serif !important;
-}
-
-/* Kill lingering white backgrounds */
-[class^="st-emotion-cache"], [class*=" st-emotion-cache"]{
-  background-color:transparent !important; color:var(--text)!important;
-}
-section.main > div { background:transparent !important; }
-
-/* Header/Sidebar */
-[data-testid="stHeader"]{
-  background:linear-gradient(180deg, rgba(13,18,33,0.6), rgba(13,18,33,0.35)) !important;
-  border-bottom:1px solid var(--stroke); backdrop-filter:blur(8px);
-}
-[data-testid="stSidebar"]{
-  background:linear-gradient(180deg, rgba(18,24,44,0.65), rgba(18,24,44,0.45)) !important;
-  border-right:1px solid var(--stroke); color:var(--text)!important;
-}
-
-/* Cards & metrics */
-.cb-card{ border:1px solid var(--stroke); background:var(--card); backdrop-filter:blur(12px);
-  border-radius:18px; padding:16px; color:var(--text); }
-.metric{ display:flex; flex-direction:column; gap:.2rem; padding:12px 14px; border-radius:16px;
-  border:1px solid var(--stroke);
-  background:linear-gradient(135deg, rgba(91,104,208,0.18), rgba(201,81,203,0.16) 60%, rgba(27,132,224,0.14));}
-
-/* Buttons */
-.stButton > button{
-  border:1px solid var(--stroke) !important; color:#f6f7ff !important;
-  background:linear-gradient(135deg, rgba(201,81,203,.30), rgba(91,104,208,.28) 55%, rgba(27,132,224,.26)) !important;
-  border-radius:12px; padding:.55rem .95rem; font-weight:700;
-}
-.stButton > button:hover{
-  border-color:var(--primary) !important; box-shadow:0 0 0 2px rgba(201,81,203,.25) inset !important;
-}
-
-/* Inputs & focus */
-.stTextInput > div > div > input, .stTextArea textarea, .stNumberInput input,
-.stSelectbox div[data-baseweb="select"] input, .stDateInput input, .stTimeInput input{
-  background:rgba(18,24,44,.54) !important; color:var(--text) !important;
-  border:1px solid var(--stroke) !important; border-radius:10px !important;
-}
-.stTextInput:focus-within input, .stTextArea:focus-within textarea,
-.stNumberInput:focus-within input, .stSelectbox:focus-within [data-baseweb="select"] input{
-  border-color:var(--primary) !important; box-shadow:0 0 0 2px rgba(201,81,203,.25) inset !important;
-}
-
-/* Radio/Checkbox/Slider accents -> violet */
-input[type="checkbox"], input[type="radio"]{ accent-color:var(--primary) !important; }
-div[role="slider"]{ color:var(--primary) !important; }
-input[type="range"]::-webkit-slider-thumb{ background:var(--primary) !important; border:2px solid #fff; }
-input[type="range"]::-moz-range-thumb{ background:var(--primary) !important; border:2px solid #fff; }
-input[type="range"]::-webkit-slider-runnable-track{ background:linear-gradient(90deg, var(--primary), var(--blue3)); }
-input[type="range"]::-moz-range-track{ background:linear-gradient(90deg, var(--primary), var(--blue3)); }
-
-/* Selects */
-[data-baseweb="select"] > div{
-  background:rgba(18,24,44,.54) !important; color:var(--text) !important;
-  border:1px solid var(--stroke) !important; border-radius:10px !important;
-}
-[data-baseweb="select"]:focus-within > div{
-  border-color:var(--primary) !important; box-shadow:0 0 0 2px rgba(201,81,203,.25) inset !important;
-}
-
-/* DataFrames */
-[data-testid="stDataFrame"]{ border:1px solid var(--stroke); border-radius:12px; background:rgba(18,24,44,.35); }
-[data-testid="stTable"]{ color:var(--text); }
-
-/* Risk pills */
-.cb-pill{ display:inline-block; padding:6px 12px; border-radius:999px; border:1px solid var(--stroke);
-  margin-right:6px; font-weight:700; color:var(--text); background:rgba(77,107,211,.10);}
-.hi{ color:#ffd2db; border-color:rgba(201,81,203,.55); background:rgba(201,81,203,.14);}
-.med{ color:#ffe8b8; border-color:rgba(91,104,208,.55); background:rgba(91,104,208,.14);}
-.lo{ color:#d3f9ea; border-color:rgba(27,132,224,.55); background:rgba(27,132,224,.14);}
-
-/* Number-match selectable pills */
-.nm-grid { display:flex; gap:12px; }
-.nm-option {
-  border:1px solid var(--stroke);
-  background: linear-gradient(135deg, rgba(77,107,211,0.16), rgba(27,132,224,0.12));
-  border-radius: 14px;
-  padding: 10px 14px;
-  font-weight: 700;
-  color: var(--text);
-  text-align: center;
-}
-.nm-option.selected {
-  border-color: rgba(201,81,203,0.75);
-  box-shadow: 0 0 0 2px rgba(201,81,203,0.25) inset;
-}
-
-/* ---------- FORCE all red “negative” tokens to violet (no config.toml needed) ---------- */
-:root, [data-theme="dark"], [data-theme="light"]{
-  --primary-color:#c951cb !important;
-  --colorsBackgroundAccent:#c951cb !important;
-  --colorsBackgroundAccentHover:#d66fd8 !important;
-  --colorsBorderAccent:#c951cb !important;
-  --colorsBorderSelected:#c951cb !important;
-  --colorsBackgroundNegative:#c951cb !important;
-  --colorsContentNegative:#0b0f1a !important;
-  --colorsBorderNegative:#c951cb !important;
-}
-
-/* ---------- Multiselect / Tag chips (BaseWeb) ---------- */
-.stMultiSelect [data-baseweb="tag"], [data-baseweb="tag"]{
-  background:linear-gradient(135deg, #c951cb, #5b68d0) !important;
-  color:#e9edf7 !important; border:1px solid rgba(201,81,203,.55) !important;
-  border-radius:10px !important; font-family:'Poppins',sans-serif !important; font-weight:700 !important;
-}
-[data-baseweb="tag"] svg, [data-baseweb="tag"] [data-baseweb="button"] svg{
-  color:#e9edf7 !important; opacity:.95;
-}
-[data-baseweb="tag"]:hover{ box-shadow:0 0 0 2px rgba(201,81,203,.35) inset !important; }
-
-/* ===== Sidebar radio & checkbox: force violet accents ===== */
-[data-testid="stSidebar"] [data-baseweb="radio"] div[role="radio"]{
-  border: 2px solid #c951cb !important;
-  width: 18px; height: 18px; border-radius: 999px;
-  background: transparent !important;
-}
-[data-testid="stSidebar"] [data-baseweb="radio"] div[role="radio"][aria-checked="true"]{
-  background: #c951cb !important;
-  border-color: #c951cb !important;
-  box-shadow: 0 0 0 4px rgba(201,81,203,0.28) inset !important;
-}
-[data-testid="stSidebar"] [data-baseweb="radio"] label,
-[data-testid="stSidebar"] [data-baseweb="checkbox"] label{
-  color: #e9edf7 !important;
-  font-family: 'Poppins', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif !important;
-  font-weight: 700 !important;
-}
-[data-testid="stSidebar"] [data-baseweb="checkbox"] label > div:first-child{
-  border: 2px solid #c951cb !important;
-  border-radius: 6px !important;
-  background: transparent !important;
-}
-[data-testid="stSidebar"] [data-baseweb="checkbox"] label > div:first-child svg{
-  color: #0b0f1a !important;
-}
-[data-testid="stSidebar"] [data-baseweb="checkbox"] input:checked ~ div:first-child{
-  background: #c951cb !important;
-  border-color: #c951cb !important;
-  box-shadow: 0 0 0 2px rgba(201,81,203,0.25) inset !important;
-}
-[data-testid="stSidebar"] [data-baseweb="radio"] div[role="radio"]:hover,
-[data-testid="stSidebar"] [data-baseweb="checkbox"] label > div:first-child:hover{
-  box-shadow: 0 0 0 2px rgba(201,81,203,0.35) inset !important;
-}
-
-/* Dividers */
-hr{ border:none; border-top:1px solid var(--stroke); margin:1.25rem 0; }
-</style>
-"""
-st.markdown(STYLES, unsafe_allow_html=True)
-
-# ============================ NAVIGATION ============================
-st.sidebar.markdown(
-    f"""
-<div class="cb-card" style="margin-bottom:10px">
-  <b>{APP_TITLE}</b><br/>
-  <span class="small">Meraki • Umbrella • Duo • NetAcad</span>
-</div>
-""",
+# ------------------------- Hero -------------------------
+st.markdown(
+    """
+    <div class="hero fade-in">
+      <div class="title">CyberBridge Guardian — Cisco Edition</div>
+      <div class="kicker">Duo MFA · Umbrella DNS · Meraki Planner · Mini-SOC · ROI & Equity</div>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
-page = st.sidebar.radio(
-    "Navigate",
-    [
-        "Home (Start Here)",
-        "1) Duo MFA Rollout",
-        "2) Umbrella DNS Guard",
-        "3) Meraki Reliability Planner",
-        "4) Mini-SOC (Simulated)",
-        "5) ROI & Equity Impact",
-        "Appendix: Context & Stakeholders",
-    ],
-)
-st.sidebar.markdown("---")
-demo_mode = st.sidebar.checkbox("Use sample data", value=True)
-st.sidebar.caption("Demonstration uses only synthetic data.")
+tb1, tb2, tb3 = st.columns([1,2,1])
+with tb1:
+    demo_mode = st.checkbox("Use sample data", value=True)
+with tb3:
+    st.markdown('<div class="small" style="text-align:right;">All data is synthetic</div>', unsafe_allow_html=True)
 
-# ============================ UTILITIES ============================
+# ------------------------- Top Nav -------------------------
+with st.container():
+    st.markdown('<div class="cb-navwrap">', unsafe_allow_html=True)
+    selected = option_menu(
+        None,
+        ["Home", "Duo MFA", "Umbrella DNS", "Meraki Planner", "Mini-SOC", "ROI & Equity", "Appendix"],
+        icons=["house", "shield-lock", "shield-shaded", "wifi", "activity", "cash-coin", "book"],
+        menu_icon="cast", default_index=0, orientation="horizontal",
+        styles={
+            "container": {"background-color": "transparent", "padding": "0"},
+            "icon": {"color": "#22D3EE", "font-size": "18px"},
+            "nav-link": {
+                "font-size": "15px", "font-weight": "800",
+                "text-transform": "none", "color": "#EAF2FF",
+                "margin": "0 6px", "padding":"10px 14px",
+                "border-radius":"12px"
+            },
+            "nav-link-selected": {
+                "background-color": "transparent", "color": "#FFFFFF",
+                "border":"1px solid rgba(255,255,255,.14)"
+            },
+        }
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ------------------------- Utilities -------------------------
 KNOWN_BRANDS = [
     "google","microsoft","office","outlook","teams","azure","onedrive",
     "cisco","meraki","umbrella","duo","blackboard","canvas","zoom",
@@ -275,12 +89,10 @@ KNOWN_BRANDS = [
 ]
 SUSP_TLDS = {"zip","kim","xyz","top","gq","ml","cf","tk","work","fit","rest","country","asia","science"}
 
-def pill(text, cls): return f'<span class="cb-pill {cls}">{text}</span>'
-
 def download_bytes(filename: str, raw: bytes, label: str):
     b64 = base64.b64encode(raw).decode()
-    href = f'<a download="{filename}" href="data:application/octet-stream;base64,{b64}">{label}</a>'
-    st.markdown(href, unsafe_allow_html=True)
+    st.markdown(f'<a download="{filename}" href="data:application/octet-stream;base64,{b64}">{label}</a>',
+                unsafe_allow_html=True)
 
 def domain_parts(url: str):
     parsed = urlparse(url if re.match(r"^\w+://", url) else "http://" + url)
@@ -295,8 +107,7 @@ def domain_parts(url: str):
         parts = host.split(".")
         if len(parts) >= 2:
             domain = ".".join(parts[-2:])
-            sld = parts[-2]
-            tld = parts[-1]
+            sld, tld = parts[-2], parts[-1]
             sub = ".".join(parts[:-2])
         else:
             domain, sld, tld, sub = host, host, "", ""
@@ -308,11 +119,8 @@ def shannon_entropy(s: str):
     probs = [float(s.count(c)) / len(s) for c in set(s)]
     return -sum(p * log2(p) for p in probs)
 
-def looks_like_ip(host: str):
-    return bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host))
-
-def punycode_present(host: str):
-    return "xn--" in host.lower()
+def looks_like_ip(host: str): return bool(re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host))
+def punycode_present(host: str): return "xn--" in host.lower()
 
 def brand_lookalike_score(sld: str):
     if not sld: return 0.0
@@ -337,18 +145,10 @@ def url_feature_vector(url: str):
     path_deep = path.count("/")
     has_port = bool(re.search(r":\d+$", host))
     return {
-        "length": length,
-        "subdomains": sub_count,
-        "dashes": dash_count,
-        "ats": at_count,
-        "digit_ratio": digit_ratio,
-        "entropy": entropy,
-        "ip": int(ip),
-        "punycode": int(puny),
-        "tld_suspicious": tld_susp,
-        "brand_lookalike": brand_score,
-        "path_depth": path_deep,
-        "has_port": int(has_port),
+        "length": length, "subdomains": sub_count, "dashes": dash_count, "ats": at_count,
+        "digit_ratio": digit_ratio, "entropy": entropy,
+        "ip": int(ip), "punycode": int(puny), "tld_suspicious": tld_susp,
+        "brand_lookalike": brand_score, "path_depth": path_deep, "has_port": int(has_port),
         "sld": sld, "tld": tld_flag, "host": host, "domain": domain
     }
 
@@ -368,211 +168,170 @@ def risk_score_from_features(f):
     score += 8 * f["has_port"]
     return max(0.0, min(100.0, score))
 
-def risk_label(score: float):
-    if score < 25:  return "Low", "lo"
-    if score < 60:  return "Medium", "med"
-    return "High", "hi"
-
-def hero(title:str, subtitle:str):
-    st.markdown(f"""
-    <div class="cb-hero">
-      <h1>{title}</h1>
-      <p>{subtitle}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-def kpi(label, value, sub=""):
-    st.markdown(f"""
-    <div class="metric">
-      <div class="big">{value}</div>
-      <div class="sub">{label}{(" — " + sub) if sub else ""}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-def explainer(what:str, how:str, why:str):
-    st.markdown('<div class="cb-card cb-explainer">', unsafe_allow_html=True)
-    cols = st.columns(3)
-    with cols[0]:
-        st.markdown("### What this section does")
-        st.markdown(what)
-    with cols[1]:
-        st.markdown("### How to use / simulate")
-        st.markdown(how)
-    with cols[2]:
-        st.markdown("### Why it matters (competition)")
-        st.markdown(why)
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# ============================ PAGES ============================
-if page == "Home (Start Here)":
-    hero(
-        "CyberBridge Guardian",
-        "Cisco-aligned campus security: Duo MFA adoption, Umbrella DNS pre-blocking, Meraki reliability planning, a student mini-SOC, and ROI translated to equity outcomes."
-    )
-
-    st.markdown("#### Overview")
+def metric_tile(label, value, sub=""):
     st.markdown(
-        """
-This application operationalizes the CyberBridge concept for MSIs/HBCUs. It demonstrates how Cisco Duo, Umbrella, and Meraki can be integrated with campus processes and student training (Networking Academy) to reduce phishing/ransomware risk, improve network reliability, and express value in formal budget terms.
-        """
+        f"""
+        <div class="metric">
+          <div class="big">{value}</div>
+          <div class="sub">{label}{(" — " + sub) if sub else ""}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.markdown("#### How to use this application")
-    st.markdown(
-        """
-1. Use the left sidebar to navigate between modules.  
-2. Each section begins with **What / How to use / Why it matters**.  
-3. Where relevant, outputs can be **exported to CSV** for documentation and analysis.  
-4. All data shown is **synthetic**. No institutional credentials are required.  
-        """
-    )
+# ------------------------- Pages -------------------------
+if selected == "Home":
+    with st.container():
+        st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+        st.markdown("### Overview")
+        st.markdown(
+            "CyberBridge Guardian turns Cisco security building blocks into an operational, explainable demo for MSIs/HBCUs. "
+            "Duo drives phishing resistance; Umbrella reduces exposure; Meraki improves reliability; the Mini-SOC trains students; "
+            "and ROI is framed in equity outcomes."
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("#### Key outcomes at a glance")
+    st.markdown("<br/>", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
-    with c1: kpi("Reliability uplift (zones)", "65% → 99%", "Meraki plan")
-    with c2: kpi("Phishing reduction", "≈ 40%+", "Duo MFA")
-    with c3: kpi("Pre-block rate", "15–30%", "Umbrella DNS")
-    with c4: kpi("Net annual savings", "≈ $1.4M", "~5% breach reduction")
+    with c1: metric_tile("Reliability uplift (zones)", "65% → 99%", "Meraki plan")
+    with c2: metric_tile("Phishing reduction", "≈ 40%+", "Duo MFA")
+    with c3: metric_tile("Pre-block rate", "15–30%", "Umbrella DNS")
+    with c4: metric_tile("Net annual savings", "≈ $1.4M", "~5% breach reduction")
 
-    st.markdown("---")
+    st.markdown("<hr/>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+        st.markdown("**Design principles**")
+        st.markdown(
+            "- Tie controls to institutional outcomes.\n"
+            "- Keep signals explainable and transparent.\n"
+            "- Reduce operator effort; keep paths to API integration.\n"
+            "- Use visuals that teach, not just decorate."
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ------------------------- Duo MFA (QR-only, inline verify) -------------------------
+elif selected == "Duo MFA":
+    st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+    st.markdown("## Duo MFA — Enroll & Verify (6-digit TOTP)")
     st.markdown(
-        """
-**Design principles**  
-• Formal explanations tied to institutional outcomes.  
-• Explainable risk signals and transparent policy decisions.  
-• Minimal cognitive load for small IT teams; extensible to APIs later.  
-        """
+        "- Enrollment is via QR **scanned in Duo Mobile**.\n"
+        "- After scanning, enter the **6-digit code** from the app and click **Verify**.\n"
+        "- This demo only stores a simple device-binding hash in session."
     )
-
-# -------------------- Duo MFA Rollout --------------------
-elif page == "1) Duo MFA Rollout":
-    hero("Duo MFA Rollout", "Scan-to-enroll, one-tap auto-verify (push-style simulation), and number-match with a clean selectable option UI.")
-
-    explainer(
-        what="""
-- Provides a realistic MFA enrollment and approval model aligned with Cisco Duo.
-- Two verification modes: (A) Auto-Verify (push-style simulation), (B) Code entry with number-match.
-- Stores a hashed device binding for demonstration.
-        """,
-        how="""
-1. Enter a campus email and scan the QR with Duo/Google Authenticator/1Password.  
-2. Approve using **Auto-Verify** (no typing) or enter the 6-digit code and complete **number-match** by selecting the correct option.  
-3. Use **Reset secret** to re-enroll.  
-4. The **Rollout & Adoption** calculator estimates helpdesk load.
-        """,
-        why="""
-- Supports Cisco Duo adoption for phishing defense with minimal friction.  
-- Demonstrates push-style approvals and number-match to resist MFA fatigue.  
-- Communicates a credible operational path for campus onboarding at scale.
-        """,
-    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if qrcode is None or pyotp is None:
-        st.warning("To run the live enrollment/verification demo, install:  pip install pyotp qrcode[pil]")
+        st.warning("For the live demo, install: `pip install pyotp qrcode[pil]`")
     else:
-        # --- Enrollment ---
-        colA, colB = st.columns([1,1])
+        # Initialize session state
+        if "totp_secret" not in st.session_state:
+            st.session_state.totp_secret = pyotp.random_base32()
+            st.session_state.bound_hash = None
+            st.session_state.duo_ack = False
 
-        with colA:
-            st.subheader("Enroll — QR provisioning")
+        secret = st.session_state.totp_secret
+
+        # Two-column flow with a big arrow in the middle
+        col_left, col_arrow, col_right = st.columns([1.15, 0.2, 1], gap="large")
+
+        # ---------- LEFT: STEP 1 — Scan QR via Duo Mobile ----------
+        with col_left:
+            st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+            st.subheader("Step 1 — Scan the QR in Duo Mobile")
+
             user_email = st.text_input("Campus email", "student@example.edu")
             issuer = st.text_input("Issuer", "CyberBridge Guardian (Duo-style)")
-            if "totp_secret" not in st.session_state or st.button("Reset secret (re-enroll)"):
+
+            # Reset / re-enroll
+            if st.button("Reset QR (re-enroll)"):
                 st.session_state.totp_secret = pyotp.random_base32()
                 st.session_state.bound_hash = None
-                # Reset number-match as well
-                st.session_state.pop("nm_target", None)
-                st.session_state.pop("nm_options", None)
-                st.session_state.pop("nm_selected", None)
-            secret = st.session_state.totp_secret
-            st.code(secret, language="text")
-            st.caption("In production this secret is stored server-side only; shown here for demonstration transparency.")
+                st.session_state.duo_ack = False
+                secret = st.session_state.totp_secret
+                st.success("New secret generated. Re-scan the fresh QR.")
 
-        with colB:
-            uri = pyotp.TOTP(secret).provisioning_uri(name=user_email or "user@campus.edu", issuer_name=issuer or "CyberBridge")
-            img = qrcode.make(uri)
-            buf = io.BytesIO(); img.save(buf, format="PNG")
-            st.image(buf.getvalue(), caption="Scan with Duo / Google Authenticator / 1Password")
-            st.caption("Authenticator apps generally accept QR codes directly from the camera.")
+            st.markdown(
+                "Open **Duo Mobile** → **Add** → **Use QR scanner**. "
+                "Then scan the QR below to bind this device."
+            )
 
-        st.markdown("---")
-        st.subheader("Approve")
+            # Acknowledge instructions to reveal QR (prevents accidental screenshots)
+            show_qr = st.button("✅ I have Duo Mobile open — Show QR", disabled=st.session_state.duo_ack)
+            if show_qr:
+                st.session_state.duo_ack = True
+                st.toast("Duo instructions acknowledged.", icon="✅")
 
-        c1, c2 = st.columns(2)
-        
-        # --- A) Auto-Verify (push-style simulation) ---
-        with c1:
-            st.markdown("**A) Auto-Verify (push-style simulation)**")
-            if st.button("Auto-Verify Now"):
-                # Bind a simple device fingerprint hash on first verify
-                if st.session_state.get("bound_hash") is None:
-                    bind_raw = f"{user_email}|{secret}"
-                    st.session_state.bound_hash = hashlib.sha256(bind_raw.encode()).hexdigest()
-                st.success("Approved. Device binding recorded.")
-        
-        # --- B) 6-digit Code Only (no number-match) ---
-        with c2:
-            st.markdown("**B) 6-digit Code Only**")
-            code = st.text_input("Enter 6-digit code from your authenticator", max_chars=6)
-        
-            # (Optional) helper: show time remaining for current TOTP window
-            if pyotp is not None:
-                totp = pyotp.TOTP(secret)
-                now = int(time.time())
-                period = getattr(totp, "interval", 30)
-                remaining = period - (now % period)
-                st.caption(f"Code refreshes in ~{remaining}s")
-        
-            if st.button("Verify 6-digit Code"):
-                if not code.strip():
-                    st.error("Enter the 6-digit code.")
-                elif pyotp is None:
-                    st.error("pyotp is not installed. Run:  pip install pyotp")
+            st.markdown("<hr/>", unsafe_allow_html=True)
+
+            if st.session_state.duo_ack:
+                uri = pyotp.TOTP(secret).provisioning_uri(
+                    name=user_email or "user@campus.edu",
+                    issuer_name=issuer or "CyberBridge"
+                )
+                img = qrcode.make(uri)
+                buf = io.BytesIO(); img.save(buf, format="PNG")
+                st.image(buf.getvalue(), caption="Scan this QR with Duo Mobile (or Google Authenticator / 1Password)")
+                st.caption("Demo transparency: secret shown below; in production this is never visible.")
+                st.code(secret, language="text")
+            else:
+                st.info("Click the acknowledge button above to reveal the QR code.")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # ---------- MIDDLE: ARROW ----------
+        with col_arrow:
+            st.markdown(
+                '<div class="fade-in" style="font-size:48px; line-height:1; text-align:center; padding-top:120px;">➡️</div>',
+                unsafe_allow_html=True
+            )
+
+        # ---------- RIGHT: STEP 2 — Enter code & Verify ----------
+        with col_right:
+            st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+            st.subheader("Step 2 — Enter the 6-digit code from Duo")
+
+            code_raw = st.text_input("6-digit code", max_chars=6, help="Type the 6 digits shown in Duo Mobile")
+            code = re.sub(r"[^0-9]", "", code_raw or "")
+            if code_raw and code_raw != code:
+                st.caption("Non-digits removed; codes are numeric only.")
+
+            # Timer hint
+            totp = pyotp.TOTP(secret)
+            now = int(time.time()); period = getattr(totp, "interval", 30)
+            remaining = period - (now % period)
+            st.caption(f"Code refreshes in about {remaining}s")
+
+            if st.button("Verify"):
+                if len(code) != 6:
+                    st.error("Please enter the 6-digit code from Duo Mobile.")
                 else:
-                    ok = pyotp.TOTP(secret).verify(code.strip(), valid_window=1)  # small clock drift tolerance
+                    ok = totp.verify(code.strip(), valid_window=1)
                     if ok:
-                        # ensure binding exists for demo parity with Auto-Verify
+                        # Bind on first success (demo only)
                         if st.session_state.get("bound_hash") is None:
-                            st.session_state.bound_hash = hashlib.sha256(f"{user_email}|{secret}".encode()).hexdigest()
-                        st.success("Approved via 6-digit code.")
+                            bind_raw = f"{(user_email or 'user@campus.edu')}|{secret}"
+                            st.session_state.bound_hash = hashlib.sha256(bind_raw.encode()).hexdigest()
+                        st.success("Approved — Duo code verified and device bound.")
+                        try: st.balloons()
+                        except Exception: pass
                     else:
-                        st.error("Invalid or expired code. Try the current 6-digit code in your app.")
+                        st.error("Invalid or expired code. Open Duo Mobile and try the current 6-digit code.")
 
-        st.markdown("---")
-        st.subheader("Rollout & Adoption (Operations)")
-        size = st.number_input("Population to onboard", 4000, step=100)
-        adoption = st.slider("Adoption achieved (%)", 0, 100, 85)
-        helpdesk_load = max(0, round((size * (100 - adoption) / 100) * 0.08))  # ~8% of stragglers need assistance
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Users protected", f"{int(size*adoption/100):,}")
-        c2.metric("Remaining to enroll", f"{int(size*(100-adoption)/100):,}")
-        c3.metric("Estimated helpdesk tickets", f"{helpdesk_load:,}")
-        st.caption("Assumptions are adjustable to institutional norms.")
+            st.markdown("</div>", unsafe_allow_html=True)
 
-# -------------------- Umbrella DNS Guard --------------------
-elif page == "2) Umbrella DNS Guard":
-    hero("Umbrella DNS Guard", "Policy-driven DNS filtering and explainable URL risk to prevent threats pre-click.")
-
-    explainer(
-        what="""
-- Maintain allow/block/watch lists for domains.
-- Evaluate URLs with an explainable risk score (lookalike, punycode, TLD, entropy, port, etc.).
-- Export results for audit or instruction.
-        """,
-        how="""
-1. Manage lists in the three columns below.  
-2. Paste URLs into **Bulk evaluate**, then **Evaluate Policy**.  
-3. Use **Explain a URL** to view signal breakdown for a single link.  
-4. Export CSV for review.
-        """,
-        why="""
-- Mirrors Cisco Umbrella’s approach: neutralize threats at DNS before the browser.
-- Transparent signals build trust and enable student/faculty learning.
-- Reduces phishing impact and IT response burden.
-        """,
+# ------------------------- Umbrella DNS -------------------------
+elif selected == "Umbrella DNS":
+    st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+    st.markdown("## Umbrella DNS Guard")
+    st.markdown(
+        "- Maintain allow / block / watch lists.\n"
+        "- Explainable URL risk (lookalike, punycode, TLD, entropy, port, etc.).\n"
+        "- Export results for audit and education."
     )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    # Initialize lists
+    # Lists
     if "blocklist" not in st.session_state:
         st.session_state.blocklist = set(["examp1e-helpdesk.com","login-verify-secure.net"]) if demo_mode else set()
     if "allowlist" not in st.session_state:
@@ -580,29 +339,45 @@ elif page == "2) Umbrella DNS Guard":
     if "watchlist" not in st.session_state:
         st.session_state.watchlist = set(["out1ook-login-secure.com","micr0soft-support-secure-login.com"]) if demo_mode else set()
 
-    colA, colB, colC = st.columns(3)
-    with colA:
+    three = st.columns(3)
+    with three[0]:
+        st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
         st.markdown("### Blocklist")
         blk_add = st.text_input("Add domain to block")
-        if st.button("Add to Blocklist"):
+        if st.button("Add → Blocklist"):
             if blk_add.strip(): st.session_state.blocklist.add(blk_add.strip().lower())
         st.code("\n".join(sorted(st.session_state.blocklist)) or "(empty)")
-    with colB:
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with three[1]:
+        st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
         st.markdown("### Allowlist")
         allow_add = st.text_input("Add domain to allow")
-        if st.button("Add to Allowlist"):
+        if st.button("Add → Allowlist"):
             if allow_add.strip(): st.session_state.allowlist.add(allow_add.strip().lower())
         st.code("\n".join(sorted(st.session_state.allowlist)) or "(empty)")
-    with colC:
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with three[2]:
+        st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
         st.markdown("### Watchlist")
         watch_add = st.text_input("Add domain to watch")
-        if st.button("Add to Watchlist"):
+        if st.button("Add → Watchlist"):
             if watch_add.strip(): st.session_state.watchlist.add(watch_add.strip().lower())
         st.code("\n".join(sorted(st.session_state.watchlist)) or "(empty)")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("---")
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
     st.subheader("Bulk evaluate (one URL per line)")
-    sample_bulk = "out1ook-login-secure.com\nhttp://xn--pple-43d.com\nhttps://duo.com\nhttp://192.168.1.23/login\nfinaid-portal.support-verify.net"
+    sample_bulk = (
+        "out1ook-login-secure.com\n"
+        "http://xn--pple-43d.com\n"
+        "https://duo.com\n"
+        "http://192.168.1.23/login\n"
+        "finaid-portal.support-verify.net"
+    )
     urls_bulk = st.text_area("URLs", height=120, value=(sample_bulk if demo_mode else ""))
 
     def policy_decision(u: str):
@@ -622,7 +397,7 @@ elif page == "2) Umbrella DNS Guard":
         if sc >= 25: return "WATCH", sc
         return "ALLOW", sc
 
-    if st.button("Evaluate Policy", type="primary"):
+    if st.button("Evaluate Policy"):
         rows = []
         for line in urls_bulk.splitlines():
             u = line.strip()
@@ -633,38 +408,32 @@ elif page == "2) Umbrella DNS Guard":
             df = pd.DataFrame(rows).sort_values(["decision","score"], ascending=[True, False])
             st.dataframe(df, use_container_width=True)
             download_bytes("dns_policy_results.csv", df.to_csv(index=False).encode(), "Download CSV")
+            try: st.balloons()
+            except Exception: pass
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("---")
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
     st.subheader("Explain a single URL")
     bad = st.text_input("URL to explain", "https://micr0soft-support-secure-login.com/renew?session=9876")
     if st.button("Explain URL"):
-        f = url_feature_vector(bad.strip())
-        sc = risk_score_from_features(f)
-        label, cls = risk_label(sc)
-        st.markdown(f'<div class="cb-card">Risk {pill(label, cls)} — Score {sc:.1f}/100</div>', unsafe_allow_html=True)
+        f = url_feature_vector(bad.strip()); sc = risk_score_from_features(f)
+        label = "Low" if sc < 25 else ("Medium" if sc < 60 else "High")
+        st.markdown(f"**Risk:** {label} — **Score:** {sc:.1f}/100")
         st.write(pd.DataFrame([f]).T.rename(columns={0:"value"}))
-        st.caption("Signals may include: brand lookalike similarity, punycode, suspicious TLDs, IP host, deep paths, non-standard port, high entropy.")
+        st.caption("Signals: brand lookalike similarity, punycode, suspicious TLDs, IP host, deep paths, non-standard port, high entropy.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# -------------------- Meraki Reliability Planner --------------------
-elif page == "3) Meraki Reliability Planner":
-    hero("Meraki Reliability Planner", "Estimate AP counts and visualize the path from ~65% to ~99% reliability in critical zones.")
-
-    explainer(
-        what="""
-- Models approximate AP requirements for high-usage areas (e.g., library, student center, large lecture space).
-- Shows simulated before/after reliability stabilization given target uptime and redundancy.
-        """,
-        how="""
-1. Set peak concurrent users, zone area, per-AP capacity, and redundancy.  
-2. Review AP counts, density per 1k sq ft, and target uptime.  
-3. Examine the 30-day reliability chart for pre/post deployment effects.
-        """,
-        why="""
-- Aligns with Cisco Meraki’s cloud-managed deployments for small IT teams.  
-- Prioritizes student experience in the most impacted spaces.  
-- Provides a practical plan institutions can resource and scale.
-        """,
+# ------------------------- Meraki Planner -------------------------
+elif selected == "Meraki Planner":
+    st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+    st.markdown("## Meraki Reliability Planner")
+    st.markdown(
+        "- Estimate AP counts for high-usage zones.\n"
+        "- Visualize stability around your target after redundancy."
     )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -681,12 +450,11 @@ elif page == "3) Meraki Reliability Planner":
     density = round(aps / max(1, sqft/1000), 2)
 
     cA, cB, cC = st.columns(3)
-    cA.metric("APs required (zone)", f"{aps} APs", f"base {raw_aps}")
-    cB.metric("AP density", f"{density} per 1k sq ft")
-    cC.metric("Reliability target", f"{target_uptime}%")
+    with cA: metric_tile("APs required (zone)", f"{aps} APs", f"base {raw_aps}")
+    with cB: metric_tile("AP density", f"{density} per 1k sq ft")
+    with cC: metric_tile("Reliability target", f"{target_uptime}%")
 
-    st.markdown("---")
-    st.subheader("Before/After (30-day simulated health)")
+    st.markdown("<br/>", unsafe_allow_html=True)
     np.random.seed(7)
     before_uptime = np.clip(np.random.normal(0.65, 0.07, 30), 0.3, 0.95)
     after_uptime  = np.clip(np.random.normal(target_uptime/100.0, 0.02, 30), 0.8, 1.0)
@@ -696,27 +464,14 @@ elif page == "3) Meraki Reliability Planner":
         "after":  (after_uptime*100).round(1),
     })
     st.line_chart(df_health.set_index("day"))
-    st.caption("In production, ingest Meraki telemetry; this demonstration shows expected stabilization near the chosen target with redundancy.")
+    st.caption("For production, ingest Meraki telemetry; this demo shows stabilization near your target with redundancy.")
 
-# -------------------- Mini-SOC (Simulated) --------------------
-elif page == "4) Mini-SOC (Simulated)":
-    hero("Mini-SOC (Simulated)", "Student-staffed monitoring and response training using realistic synthetic events.")
-
-    explainer(
-        what="""
-- Generates realistic DNS blocks, login anomalies, and policy hits.
-        """,
-        how="""
-1. Select **Regenerate Events** to produce a fresh week of logs.  
-2. Filter by type and severity; search across all fields.  
-3. Export to CSV for lab work or documentation.
-        """,
-        why="""
-- Integrates with Cisco Networking Academy outcomes: practical SOC practice.  
-- Creates a workforce pipeline while providing tangible campus benefit.  
-- Builds confidence in sustained operations with limited staff.
-        """,
-    )
+# ------------------------- Mini-SOC -------------------------
+elif selected == "Mini-SOC":
+    st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+    st.markdown("## Mini-SOC (Simulated)")
+    st.markdown("Generates realistic DNS blocks, login anomalies, and policy hits.")
+    st.markdown("</div>", unsafe_allow_html=True)
 
     if "soc_events" not in st.session_state or st.button("Regenerate Events"):
         seeds = [
@@ -742,40 +497,29 @@ elif page == "4) Mini-SOC (Simulated)":
         st.session_state.soc_events = pd.DataFrame(rows).sort_values("time", ascending=False).reset_index(drop=True)
 
     df = st.session_state.soc_events.copy()
-    colf1, colf2, colf3 = st.columns(3)
-    with colf1: f_type = st.multiselect("Type", options=sorted(df["type"].unique()), default=list(sorted(df["type"].unique())))
-    with colf2: f_sev  = st.multiselect("Severity", options=sorted(df["severity"].unique()), default=list(sorted(df["severity"].unique())))
-    with colf3: query  = st.text_input("Search query", "")
+    f1, f2, f3 = st.columns(3)
+    with f1: types = st.multiselect("Type", options=sorted(df["type"].unique()), default=list(sorted(df["type"].unique())))
+    with f2: sevs  = st.multiselect("Severity", options=sorted(df["severity"].unique()), default=list(sorted(df["severity"].unique())))
+    with f3: query = st.text_input("Search")
 
-    mask = df["type"].isin(f_type) & df["severity"].isin(f_sev)
+    mask = df["type"].isin(types) & df["severity"].isin(sevs)
     if query.strip():
         pat = re.compile(re.escape(query.strip()), re.IGNORECASE)
         mask &= df.apply(lambda r: bool(pat.search(" ".join(map(str, r.values)))), axis=1)
 
     view = df[mask]
-    st.dataframe(view, use_container_width=True, height=430)
+    st.dataframe(view, use_container_width=True, height=440)
     download_bytes("mini_soc_events.csv", view.to_csv(index=False).encode(), "Download CSV")
 
-# -------------------- ROI & Equity Impact --------------------
-elif page == "5) ROI & Equity Impact":
-    hero("ROI & Equity Impact", "Model incident reduction and convert to institutional dollars and tuition equivalents.")
-
-    explainer(
-        what="""
-- Estimates incidents avoided through MFA, DNS filtering, and training effects.  
-- Calculates gross savings, program cost, net impact, and tuition equivalents.
-        """,
-        how="""
-1. Provide baseline incidents and campus size.  
-2. Adjust MFA adoption, DNS filtering, and training completion.  
-3. Review incidents avoided, dollar savings, and tuition equivalents.
-        """,
-        why="""
-- Aligns with the essay’s breach cost framing and annual savings aims.  
-- Communicates value in terms used by administrators and funders.  
-- Connects security investments to equity outcomes for MSIs/HBCUs.
-        """,
+# ------------------------- ROI & Equity -------------------------
+elif selected == "ROI & Equity":
+    st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+    st.markdown("## ROI & Equity Impact")
+    st.markdown(
+        "- Estimate incidents avoided via MFA, DNS filtering, and training.\n"
+        "- Translate savings into budget and tuition equivalents."
     )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -798,66 +542,49 @@ elif page == "5) ROI & Equity Impact":
     avoided = baseline_incid * total_reduction
     gross = avoided * cost_per_incident
     net = gross - program_cost
-    tuition_equiv = max(0, net) / 28000.0  # adjust per institution if needed
+    tuition_equiv = max(0, net) / 28000.0
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Incidents avoided / yr", f"{avoided:.2f}")
-    c2.metric("Gross savings / yr", f"${gross:,.0f}")
-    c3.metric("Program cost / yr", f"${program_cost:,.0f}")
-    c4.metric("Tuition equivalents", f"{int(tuition_equiv):,} students")
+    cA, cB, cC, cD = st.columns(4)
+    with cA: metric_tile("Incidents avoided / yr", f"{avoided:.2f}")
+    with cB: metric_tile("Gross savings / yr", f"${gross:,.0f}")
+    with cC: metric_tile("Program cost / yr", f"${program_cost:,.0f}")
+    with cD: metric_tile("Tuition equivalents", f"{int(tuition_equiv):,} students")
 
-    st.markdown("---")
-    st.subheader("Narrative (for proposals and planning)")
+    st.markdown("<hr/>", unsafe_allow_html=True)
     st.markdown(
-        f"""
-With Duo MFA adoption at {mfa_adopt}%, Umbrella DNS filtering {'enabled' if dns_on else 'disabled'}, and {training_pct}% security training completion,
-the modeled net reduction in successful phishing/ransomware is approximately {int(total_reduction*100)}%.
-Against {baseline_incid} incidents per year at ${cost_per_incident:,.0f} each, this avoids {avoided:.2f} incidents and saves approximately ${gross:,.0f} per year.
-After accounting for the program cost of ${program_cost:,.0f}, the net financial impact is ${net:,.0f} per year,
-which corresponds to roughly {int(tuition_equiv):,} tuition equivalents.
-        """
+        f"With Duo MFA at **{mfa_adopt}%**, Umbrella DNS "
+        f"{'**enabled**' if dns_on else '**disabled**'}, and **{training_pct}%** training completion, "
+        f"the modeled reduction in successful phishing/ransomware is **~{int(total_reduction*100)}%**. "
+        f"Against **{baseline_incid}** incidents/year at **${cost_per_incident:,.0f}** each, "
+        f"this avoids **{avoided:.2f}** incidents and yields **${gross:,.0f}** in gross savings. "
+        f"After program costs (**${program_cost:,.0f}**), net impact is **${net:,.0f}** "
+        f"(~**{int(tuition_equiv):,}** tuition equivalents)."
     )
 
-# -------------------- Appendix --------------------
-elif page == "Appendix: Context & Stakeholders":
-    hero("Appendix: Context & Stakeholders", "Formal narrative aligned to the CyberBridge essay.")
-    explainer(
-        what="""
-- Summarizes the higher-education threat environment and structural constraints at MSIs/HBCUs.  
-- Describes how CyberBridge deploys Meraki (reliability), Umbrella (pre-block), Duo (MFA), and the Networking Academy (people).
-        """,
-        how="""
-- Begin in the highest-usage zones (library, student center, high-use classrooms).  
-- Roll out Duo MFA and enforce DNS policy; stand up a student mini-SOC for monitoring/response.  
-- Iterate and scale as funding and partnerships mature.
-        """,
-        why="""
-- Demonstrates deliverable, quantifiable improvements in resilience and equity outcomes.  
-- Positions Cisco as a workforce and infrastructure partner, not only a technology vendor.  
-- Creates long-term sustainability through trained students and manageable cloud tooling.
-        """,
+# ------------------------- Appendix -------------------------
+elif selected == "Appendix":
+    st.markdown('<div class="card fade-in">', unsafe_allow_html=True)
+    st.markdown("## Appendix: Context & Stakeholders")
+    st.markdown(
+        "- Higher-ed threats and constraints at MSIs/HBCUs.\n"
+        "- How Meraki (reliability), Umbrella (pre-block), Duo (MFA), and NetAcad (people) combine into CyberBridge."
     )
-
     st.markdown("### Stakeholders")
     st.markdown(
-        """
-- Internal (Cisco): Social Impact & Inclusion, Networking Academy staff, regional account engineers  
-- External: Partner MSIs/HBCUs (AL/MS/TX), faculty and IT teams, nonprofits (e.g., MS-CC), public and private partners  
-- Community: Students and families (protection of data and aid), employers (job-ready graduates)
-        """
+        "- **Internal (Cisco):** Social Impact & Inclusion, NetAcad staff, regional AEs\n"
+        "- **External:** Partner MSIs/HBCUs (AL/MS/TX), faculty & IT, nonprofits (e.g., MS-CC), partners\n"
+        "- **Community:** Students & families, employers"
     )
-
-    st.markdown("---")
     st.markdown("### Why this web application")
     st.markdown(
-        """
-- Operational: shows day-to-day impact of policies and MFA beyond slideware.  
-- Explainable: transparent risk factors and policy rationales.  
-- Educational: supports student SOC rotations with realistic exercises.  
-- Measurable: ROI translated into budgeting terms and equity framing.
-        """
+        "- **Operational:** day-to-day impact beyond slideware.\n"
+        "- **Explainable:** transparent risk factors and policy rationales.\n"
+        "- **Educational:** student SOC rotations with realistic exercises.\n"
+        "- **Measurable:** ROI in budgeting/equity terms."
     )
+    st.markdown("</div>", unsafe_allow_html=True)
 
-# ============================ FOOTER ============================
+# ------------------------- Footer -------------------------
 st.markdown("<hr/>", unsafe_allow_html=True)
-st.caption("© CyberBridge — Built for MSIs/HBCUs. This demonstration uses only synthetic data and no institutional credentials.")
+st.markdown('<div class="small" style="text-align:center;">© CyberBridge — Built for MSIs/HBCUs. Synthetic data only; no institutional credentials.</div>',
+            unsafe_allow_html=True)
